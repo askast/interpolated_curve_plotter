@@ -1,0 +1,12 @@
+[project]
+name = "interpolated-curve-plotter"
+version = "0.1.0"
+description = "Pump performance curve plotter with interpolation"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "customtkinter>=5.2.0",
+    "matplotlib>=3.8.0",
+    "scipy>=1.11.0",
+    "numpy>=1.26.0",
+]

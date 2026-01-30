@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv run python:*)",
+      "Bash(python main.py:*)",
+      "Bash(git -C \"C:\\\\Users\\\\atul_t\\\\Code\\\\interpolated_curve_plotter\" add .gitignore .python-version .claude README.md database.py main.py plotting.py pyproject.toml uv.lock)",
+      "Bash(git -C \"C:\\\\Users\\\\atul_t\\\\Code\\\\interpolated_curve_plotter\" commit -m \"$\\(cat <<''EOF''\nAdd pump curve plotter with trim visibility checkboxes\n\nIncludes data entry, plotting with per-trim checkboxes that toggle\ncurve visibility while preserving interpolated curves.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
