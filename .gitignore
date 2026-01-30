@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Database and misc
+pump_data.db
+nul
