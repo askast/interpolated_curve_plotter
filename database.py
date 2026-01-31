@@ -49,6 +49,75 @@ def init_db() -> None:
         )
     """)
 
+    # Add poly degree columns if they don't exist
+    try:
+        cursor.execute("ALTER TABLE pump_curves ADD COLUMN head_poly_degree INTEGER DEFAULT 6")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        cursor.execute("ALTER TABLE pump_curves ADD COLUMN power_poly_degree INTEGER DEFAULT 4")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        cursor.execute("ALTER TABLE pump_curves ADD COLUMN pressure_drop_ft REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE pump_curves ADD COLUMN pressure_drop_unit TEXT DEFAULT 'ft'")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.commit()
+    conn.close()
+
+
+def get_poly_degrees(curve_id: int) -> tuple[int, int]:
+    """Get polynomial fit degrees for a curve. Returns (head_degree, power_degree)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT head_poly_degree, power_poly_degree FROM pump_curves WHERE id = ?", (curve_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return (row['head_poly_degree'] or 6, row['power_poly_degree'] or 4)
+    return (6, 4)
+
+
+def set_poly_degrees(curve_id: int, head_degree: int, power_degree: int) -> None:
+    """Set polynomial fit degrees for a curve."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE pump_curves SET head_poly_degree = ?, power_poly_degree = ? WHERE id = ?",
+        (head_degree, power_degree, curve_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pressure_drop(pump_name: str, rpm: int) -> tuple[float, str]:
+    """Get pressure drop for a pump model. Returns (value, unit)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT pressure_drop_ft, pressure_drop_unit FROM pump_curves WHERE name = ? AND rpm = ? LIMIT 1",
+        (pump_name, rpm)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row and row['pressure_drop_ft']:
+        return (row['pressure_drop_ft'], row['pressure_drop_unit'] or 'ft')
+    return (0.0, 'ft')
+
+
+def set_pressure_drop(pump_name: str, rpm: int, value: float, unit: str) -> None:
+    """Set pressure drop for all trims of a pump model at a given RPM."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE pump_curves SET pressure_drop_ft = ?, pressure_drop_unit = ? WHERE name = ? AND rpm = ?",
+        (value, unit, pump_name, rpm)
+    )
     conn.commit()
     conn.close()
 

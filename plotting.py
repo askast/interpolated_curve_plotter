@@ -19,6 +19,35 @@ def get_curve_data(pump_curve_id: int) -> dict:
     }
 
 
+def get_smoothed_curve_data(pump_curve_id: int, head_degree: int = 6,
+                            power_degree: int = 4, num_points: int = 200) -> dict:
+    """Get curve data resampled through polynomial fits.
+
+    Returns dict with 'flow', 'head', 'power', 'rpm' as numpy arrays,
+    where head and power are evaluated from polynomial fits.
+    """
+    raw = get_curve_data(pump_curve_id)
+    if raw is None:
+        return None
+
+    flow_smooth = np.linspace(raw['flow'].min(), raw['flow'].max(), num_points)
+    head_poly = np.polyfit(raw['flow'], raw['head'], head_degree)
+    head_smooth = np.polyval(head_poly, flow_smooth)
+
+    power_smooth = None
+    if len(raw['power']) > 0:
+        pflow = raw['flow'][:len(raw['power'])]
+        power_poly = np.polyfit(pflow, raw['power'], power_degree)
+        power_smooth = np.polyval(power_poly, flow_smooth)
+
+    return {
+        'flow': flow_smooth,
+        'head': head_smooth,
+        'power': power_smooth if power_smooth is not None else np.array([]),
+        'rpm': raw['rpm'],
+    }
+
+
 def find_parabola_intersection(flow_arr, head_arr, k):
     """
     Find where the parabola H = k*Q² intersects a pump curve.

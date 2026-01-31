@@ -2,6 +2,7 @@
 
 import customtkinter as ctk
 from tkinter import messagebox
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -26,6 +27,21 @@ POWER_CONVERSIONS = {
     "W": 0.00134102,
     "kW": 1.34102,
 }
+
+
+def _get_standard_frequency(rpm: int) -> float:
+    """Determine standard electrical frequency from pump RPM.
+
+    60 Hz nominal speeds: ~3500, ~1760, ~1160
+    50 Hz nominal speeds: ~2900, ~1500, ~950
+    """
+    rpm_to_freq = [
+        (3500, 60), (2900, 50),
+        (1760, 60), (1500, 50),
+        (1160, 60), (950, 50),
+    ]
+    closest = min(rpm_to_freq, key=lambda x: abs(x[0] - rpm))
+    return closest[1]
 
 
 class DataEntryFrame(ctk.CTkFrame):
@@ -285,75 +301,126 @@ class PlottingFrame(ctk.CTkFrame):
         super().__init__(parent, **kwargs)
 
         self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(1, weight=0)
+        self.grid_columnconfigure(2, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         self.setup_controls()
+        self.setup_checkbox_panel()
         self.setup_plot_area()
 
     def setup_controls(self):
         """Setup the left control panel."""
-        control_frame = ctk.CTkFrame(self, width=280)
+        control_frame = ctk.CTkScrollableFrame(self, width=260)
         control_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-        control_frame.grid_propagate(False)
+        control_frame.grid_columnconfigure(0, weight=1)
+        control_frame.grid_columnconfigure(1, weight=1)
 
         # Pump Selection
         ctk.CTkLabel(control_frame, text="Pump Selection",
-                     font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5))
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, columnspan=2, padx=5, pady=(10, 5))
 
-        ctk.CTkLabel(control_frame, text="Pump Name:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(control_frame, text="Pump:").grid(row=1, column=0, padx=5, pady=3, sticky="w")
         self.pump_name_menu = ctk.CTkOptionMenu(control_frame, values=["-- Select --"],
-                                                 command=self.on_pump_selected, width=150)
-        self.pump_name_menu.grid(row=1, column=1, padx=10, pady=5)
+                                                 command=self.on_pump_selected, width=140)
+        self.pump_name_menu.grid(row=1, column=1, padx=5, pady=3)
 
-        ctk.CTkLabel(control_frame, text="RPM:").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(control_frame, text="RPM:").grid(row=2, column=0, padx=5, pady=3, sticky="w")
         self.rpm_menu = ctk.CTkOptionMenu(control_frame, values=["-- Select --"],
-                                           command=self.on_rpm_selected, width=150)
-        self.rpm_menu.grid(row=2, column=1, padx=10, pady=5)
+                                           command=self.on_rpm_selected, width=140)
+        self.rpm_menu.grid(row=2, column=1, padx=5, pady=3)
 
         ctk.CTkButton(control_frame, text="Plot Curves", command=self.plot_curves,
-                      width=200).grid(row=3, column=0, columnspan=2, padx=10, pady=15)
-
-        # Available Trims Display
-        ctk.CTkLabel(control_frame, text="Available Trim Diameters:",
-                     font=ctk.CTkFont(size=12, weight="bold")).grid(row=4, column=0, columnspan=2, padx=10, pady=(20, 5), sticky="w")
-
-        self.trims_scroll = ctk.CTkScrollableFrame(control_frame, width=240, height=100)
-        self.trims_scroll.grid(row=5, column=0, columnspan=2, padx=10, pady=5, sticky="w")
-        self.trim_checkboxes: dict[float, ctk.BooleanVar] = {}
+                      width=180).grid(row=3, column=0, columnspan=2, padx=5, pady=10)
 
         # Interpolation Section
         ctk.CTkLabel(control_frame, text="Interpolation",
-                     font=ctk.CTkFont(size=16, weight="bold")).grid(row=6, column=0, columnspan=2, padx=10, pady=(30, 5))
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=4, column=0, columnspan=2, padx=5, pady=(20, 5))
 
-        ctk.CTkLabel(control_frame, text="Target Diameter:").grid(row=7, column=0, padx=10, pady=5, sticky="w")
-        self.target_diameter_entry = ctk.CTkEntry(control_frame, width=150)
-        self.target_diameter_entry.grid(row=7, column=1, padx=10, pady=5)
+        ctk.CTkLabel(control_frame, text="Diameter:").grid(row=5, column=0, padx=5, pady=3, sticky="w")
+        self.target_diameter_entry = ctk.CTkEntry(control_frame, width=140)
+        self.target_diameter_entry.grid(row=5, column=1, padx=5, pady=3)
 
-        ctk.CTkButton(control_frame, text="Add Interpolated Curve", command=self.add_interpolated_curve,
-                      width=200).grid(row=8, column=0, columnspan=2, padx=10, pady=10)
+        ctk.CTkButton(control_frame, text="Add Interpolated", command=self.add_interpolated_curve,
+                      width=180).grid(row=6, column=0, columnspan=2, padx=5, pady=5)
 
         ctk.CTkButton(control_frame, text="Clear Interpolated", command=self.clear_interpolated,
-                      width=200, fg_color="gray", hover_color="darkgray").grid(row=9, column=0, columnspan=2, padx=10, pady=5)
+                      width=180, fg_color="gray", hover_color="darkgray").grid(row=7, column=0, columnspan=2, padx=5, pady=3)
+
+        # Max Motor Power Section
+        ctk.CTkLabel(control_frame, text="Max Motor Power",
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=8, column=0, columnspan=2, padx=5, pady=(20, 5))
+
+        ctk.CTkLabel(control_frame, text="Power (HP):").grid(row=9, column=0, padx=5, pady=3, sticky="w")
+        self.power_limit_entry = ctk.CTkEntry(control_frame, width=140)
+        self.power_limit_entry.grid(row=9, column=1, padx=5, pady=3)
+
+        ctk.CTkButton(control_frame, text="Apply Power Limit", command=self.apply_power_limit,
+                      width=180).grid(row=10, column=0, columnspan=2, padx=5, pady=5)
+
+        ctk.CTkButton(control_frame, text="Clear Power Limit", command=self.clear_power_limit,
+                      width=180, fg_color="gray", hover_color="darkgray").grid(row=11, column=0, columnspan=2, padx=5, pady=3)
+
+        # System Pressure Drop Section
+        ctk.CTkLabel(control_frame, text="System Pressure Drop",
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=12, column=0, columnspan=2, padx=5, pady=(20, 5))
+
+        drop_frame = ctk.CTkFrame(control_frame)
+        drop_frame.grid(row=13, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+
+        self.pressure_drop_entry = ctk.CTkEntry(drop_frame, width=80)
+        self.pressure_drop_entry.grid(row=0, column=0, padx=(5, 3), pady=3)
+
+        self.pressure_drop_unit = ctk.CTkOptionMenu(drop_frame, values=["ft", "psi"], width=60)
+        self.pressure_drop_unit.grid(row=0, column=1, padx=3, pady=3)
+        self.pressure_drop_unit.set("ft")
+
+        ctk.CTkButton(drop_frame, text="Apply", command=self._apply_pressure_drop,
+                      width=60).grid(row=0, column=2, padx=(3, 5), pady=3)
 
         # Status
         self.status_label = ctk.CTkLabel(control_frame, text="", font=ctk.CTkFont(size=11),
-                                          wraplength=250)
-        self.status_label.grid(row=10, column=0, columnspan=2, padx=10, pady=20)
+                                          wraplength=240)
+        self.status_label.grid(row=14, column=0, columnspan=2, padx=5, pady=10)
 
         # Refresh pumps list
         self.refresh_pump_list()
 
+    def setup_checkbox_panel(self):
+        """Setup the middle panel with trim and interpolated curve checkboxes."""
+        cb_frame = ctk.CTkFrame(self, width=250)
+        cb_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        cb_frame.grid_propagate(False)
+
+        # Available Trims
+        ctk.CTkLabel(cb_frame, text="Trim Diameters",
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, padx=10, pady=(10, 5))
+
+        self.trims_scroll = ctk.CTkScrollableFrame(cb_frame, width=230, height=200)
+        self.trims_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
+        self.trim_checkboxes: dict[float, ctk.BooleanVar] = {}
+
+        # Interpolated Curves
+        ctk.CTkLabel(cb_frame, text="Interpolated Curves",
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=2, column=0, padx=10, pady=(20, 5))
+
+        self.interp_scroll = ctk.CTkScrollableFrame(cb_frame, width=230, height=200)
+        self.interp_scroll.grid(row=3, column=0, padx=10, pady=5, sticky="nsew")
+        self.interp_checkboxes: list[tuple[float, ctk.BooleanVar]] = []
+
+        cb_frame.grid_rowconfigure(1, weight=1)
+        cb_frame.grid_rowconfigure(3, weight=1)
+
     def setup_plot_area(self):
         """Setup the matplotlib plot area."""
         plot_frame = ctk.CTkFrame(self)
-        plot_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        plot_frame.grid(row=0, column=2, padx=5, pady=5, sticky="nsew")
         plot_frame.grid_columnconfigure(0, weight=1)
         plot_frame.grid_rowconfigure(0, weight=1)
 
         # Create matplotlib figure with two subplots
         self.fig = Figure(figsize=(10, 8), dpi=100)
-        self.fig.set_facecolor('#2b2b2b')
+        self.fig.set_facecolor('white')
 
         self.ax_head = self.fig.add_subplot(211)
         self.ax_power = self.fig.add_subplot(212)
@@ -366,18 +433,21 @@ class PlottingFrame(ctk.CTkFrame):
 
         # Store interpolated curve data
         self.interpolated_curves = []
+        self.power_limit_data = None
 
     def setup_axes(self):
         """Configure the plot axes appearance."""
         for ax in [self.ax_head, self.ax_power]:
-            ax.set_facecolor('#1e1e1e')
-            ax.tick_params(colors='white')
-            ax.xaxis.label.set_color('white')
-            ax.yaxis.label.set_color('white')
-            ax.title.set_color('white')
+            ax.set_facecolor('white')
+            ax.tick_params(colors='black')
+            ax.xaxis.label.set_color('black')
+            ax.yaxis.label.set_color('black')
+            ax.title.set_color('black')
             for spine in ax.spines.values():
-                spine.set_color('white')
-            ax.grid(True, alpha=0.3)
+                spine.set_color('black')
+            ax.grid(True, which='major', alpha=0.3)
+            ax.minorticks_on()
+            ax.grid(True, which='minor', alpha=0.15, linestyle=':')
 
         self.ax_head.set_xlabel('Flow (GPM)')
         self.ax_head.set_ylabel('Head (ft)')
@@ -415,24 +485,105 @@ class PlottingFrame(ctk.CTkFrame):
 
     def on_rpm_selected(self, rpm_str):
         """Handle RPM selection - update available trims checkboxes."""
+        if not hasattr(self, 'trims_scroll'):
+            return
         # Clear existing checkboxes
         for widget in self.trims_scroll.winfo_children():
             widget.destroy()
         self.trim_checkboxes.clear()
+        self.trim_poly_entries: dict[float, tuple[ctk.CTkEntry, ctk.CTkEntry, int]] = {}
 
         pump_name = self.pump_name_menu.get()
         if pump_name in self.pump_data:
             try:
                 rpm = int(rpm_str)
-                trims = plotting.get_trim_diameters_for_pump(pump_name, rpm)
-                for trim in trims:
+                curves = db.get_curves_for_pump(pump_name, rpm)
+                for curve in curves:
+                    trim = curve['trim_diameter']
+                    curve_id = curve['id']
+                    head_deg, power_deg = db.get_poly_degrees(curve_id)
+
+                    row_frame = ctk.CTkFrame(self.trims_scroll)
+                    row_frame.pack(anchor="w", padx=2, pady=2, fill="x")
+
                     var = ctk.BooleanVar(value=True)
-                    cb = ctk.CTkCheckBox(self.trims_scroll, text=f"Ø{trim}",
-                                         variable=var, command=self.plot_curves)
-                    cb.pack(anchor="w", padx=5, pady=2)
+                    cb = ctk.CTkCheckBox(row_frame, text=f"Ø{trim}",
+                                         variable=var, command=self.plot_curves, width=70)
+                    cb.grid(row=0, column=0, padx=2)
+
+                    ctk.CTkLabel(row_frame, text="H:", font=ctk.CTkFont(size=10)).grid(row=0, column=1, padx=(4, 0))
+                    head_entry = ctk.CTkEntry(row_frame, width=30, font=ctk.CTkFont(size=10))
+                    head_entry.insert(0, str(head_deg))
+                    head_entry.grid(row=0, column=2, padx=1)
+
+                    ctk.CTkLabel(row_frame, text="P:", font=ctk.CTkFont(size=10)).grid(row=0, column=3, padx=(4, 0))
+                    power_entry = ctk.CTkEntry(row_frame, width=30, font=ctk.CTkFont(size=10))
+                    power_entry.insert(0, str(power_deg))
+                    power_entry.grid(row=0, column=4, padx=1)
+
+                    # Bind enter key to save and replot
+                    head_entry.bind("<Return>", lambda e, cid=curve_id, he=head_entry, pe=power_entry: self._on_poly_degree_changed(cid, he, pe))
+                    power_entry.bind("<Return>", lambda e, cid=curve_id, he=head_entry, pe=power_entry: self._on_poly_degree_changed(cid, he, pe))
+
                     self.trim_checkboxes[trim] = var
+                    self.trim_poly_entries[trim] = (head_entry, power_entry, curve_id)
             except ValueError:
                 pass
+
+        # Load saved pressure drop for this pump/RPM
+        if pump_name in self.pump_data and hasattr(self, 'pressure_drop_entry'):
+            try:
+                rpm = int(rpm_str)
+                self._load_pressure_drop(pump_name, rpm)
+            except ValueError:
+                pass
+
+    def _apply_pressure_drop(self):
+        """Save pressure drop to DB and replot."""
+        pump_name = self.pump_name_menu.get()
+        rpm_str = self.rpm_menu.get()
+        if pump_name == "-- No Data --" or rpm_str == "-- Select --":
+            return
+        try:
+            value = float(self.pressure_drop_entry.get().strip()) if self.pressure_drop_entry.get().strip() else 0.0
+            rpm = int(rpm_str)
+        except ValueError:
+            return
+        unit = self.pressure_drop_unit.get()
+        db.set_pressure_drop(pump_name, rpm, value, unit)
+        self.plot_curves()
+        self.status_label.configure(text=f"Pressure drop saved: {value} {unit}")
+
+    def _load_pressure_drop(self, pump_name, rpm):
+        """Load pressure drop from DB into UI fields."""
+        value, unit = db.get_pressure_drop(pump_name, rpm)
+        self.pressure_drop_entry.delete(0, "end")
+        if value:
+            self.pressure_drop_entry.insert(0, str(value))
+        self.pressure_drop_unit.set(unit)
+
+    def _get_pressure_drop_ft(self) -> float:
+        """Get system pressure drop converted to ft of head."""
+        text = self.pressure_drop_entry.get().strip()
+        if not text:
+            return 0.0
+        try:
+            value = float(text)
+        except ValueError:
+            return 0.0
+        if self.pressure_drop_unit.get() == "psi":
+            value *= 2.31
+        return value
+
+    def _on_poly_degree_changed(self, curve_id, head_entry, power_entry):
+        """Save poly degree changes to DB and replot."""
+        try:
+            head_deg = int(head_entry.get().strip())
+            power_deg = int(power_entry.get().strip())
+            db.set_poly_degrees(curve_id, head_deg, power_deg)
+            self.plot_curves()
+        except ValueError:
+            pass
 
     def plot_curves(self):
         """Plot all curves for the selected pump and RPM."""
@@ -455,6 +606,9 @@ class PlottingFrame(ctk.CTkFrame):
             messagebox.showerror("Error", "No curves found for this selection")
             return
 
+        # Get system pressure drop in ft
+        head_loss_ft = self._get_pressure_drop_ft()
+
         # Clear previous plots but preserve interpolated curves
         self.ax_head.clear()
         self.ax_power.clear()
@@ -467,32 +621,191 @@ class PlottingFrame(ctk.CTkFrame):
         # Plot each trim diameter
         colors = plt.cm.viridis([i / max(len(curves) - 1, 1) for i in range(len(curves))]) if curves else []
 
+        smoothed_curves_data = []
+        smoothed_trim_diameters = []
+
         for i, curve in enumerate(curves):
-            data = plotting.get_curve_data(curve['id'])
-            if data is None:
+            raw_data = plotting.get_curve_data(curve['id'])
+            if raw_data is None:
                 continue
 
             label = f"Ø{curve['trim_diameter']}"
             color = colors[i]
 
-            self.ax_head.plot(data['flow'], data['head'], 'o-', label=label,
-                             color=color, markersize=4, linewidth=2)
+            # Get poly degrees from UI entries or DB
+            head_deg, power_deg = 6, 4
+            if hasattr(self, 'trim_poly_entries') and curve['trim_diameter'] in self.trim_poly_entries:
+                he, pe, _ = self.trim_poly_entries[curve['trim_diameter']]
+                try:
+                    head_deg = int(he.get().strip())
+                except ValueError:
+                    pass
+                try:
+                    power_deg = int(pe.get().strip())
+                except ValueError:
+                    pass
 
-            if len(data['power']) > 0:
-                self.ax_power.plot(data['flow'][:len(data['power'])], data['power'],
-                                  'o-', label=label, color=color, markersize=4, linewidth=2)
+            smooth_data = plotting.get_smoothed_curve_data(curve['id'], head_deg, power_deg)
+            if smooth_data is None:
+                continue
 
-        # Re-draw any interpolated curves
-        for interp_data in self.interpolated_curves:
+            # Apply system pressure drop
+            raw_head_adj = raw_data['head'] - head_loss_ft
+            smooth_data['head'] = smooth_data['head'] - head_loss_ft
+
+            # Plot raw points + smooth fit
+            self.ax_head.plot(raw_data['flow'], raw_head_adj, 'o', color=color, markersize=3)
+            self.ax_head.plot(smooth_data['flow'], smooth_data['head'], '-', label=label,
+                             color=color, linewidth=1)
+
+            if len(raw_data['power']) > 0:
+                pflow = raw_data['flow'][:len(raw_data['power'])]
+                self.ax_power.plot(pflow, raw_data['power'], 'o', color=color, markersize=3)
+            if len(smooth_data['power']) > 0:
+                self.ax_power.plot(smooth_data['flow'], smooth_data['power'], '-', label=label,
+                                  color=color, linewidth=1)
+
+            smoothed_curves_data.append(smooth_data)
+            smoothed_trim_diameters.append(curve['trim_diameter'])
+
+        # Store for use by interpolation and power limit
+        self._last_smoothed_curves = smoothed_curves_data
+        self._last_smoothed_trims = smoothed_trim_diameters
+
+        # Recompute interpolated curves from current (pressure-drop-adjusted) smoothed data
+        if len(smoothed_curves_data) >= 2:
+            new_interp = []
+            for idx, old in enumerate(self.interpolated_curves):
+                td = old['target_diameter']
+                interp_data = plotting.interpolate_curve(
+                    smoothed_curves_data, smoothed_trim_diameters, td)
+                if interp_data is not None:
+                    interp_data['target_diameter'] = td
+                    new_interp.append(interp_data)
+                else:
+                    new_interp.append(old)
+            self.interpolated_curves = new_interp
+
+        # Re-draw any interpolated curves (respecting checkboxes)
+        interp_colors = plt.cm.Set1(np.linspace(0, 1, max(len(self.interpolated_curves), 1)))
+        for idx, interp_data in enumerate(self.interpolated_curves):
+            # Check if this interpolated curve is visible
+            if idx < len(self.interp_checkboxes):
+                if not self.interp_checkboxes[idx][1].get():
+                    continue
+
             label = f"Ø{interp_data['target_diameter']} (interp)"
+            color = interp_colors[idx % len(interp_colors)]
             self.ax_head.plot(interp_data['flow'], interp_data['head'], '--',
-                             label=label, color='red', linewidth=2.5)
+                             label=label, color=color, linewidth=1.2)
             if interp_data['power'] is not None:
                 self.ax_power.plot(interp_data['flow'], interp_data['power'], '--',
-                                  label=label, color='red', linewidth=2.5)
+                                  label=label, color=color, linewidth=1.2)
 
-        self.ax_head.legend(loc='upper right', facecolor='#2b2b2b', edgecolor='white', labelcolor='white')
-        self.ax_power.legend(loc='upper left', facecolor='#2b2b2b', edgecolor='white', labelcolor='white')
+        # Draw power limit based on max trim curve (smoothed)
+        if self.power_limit_data is not None and smoothed_curves_data:
+            power_limit = self.power_limit_data['power_limit']
+            # Use the largest trim diameter smoothed curve as reference
+            max_idx = smoothed_trim_diameters.index(max(smoothed_trim_diameters))
+            ref_data = smoothed_curves_data[max_idx]
+            if ref_data is not None and len(ref_data['power']) > 0:
+                n = min(len(ref_data['flow']), len(ref_data['head']), len(ref_data['power']))
+                seg_flow = []
+                seg_head = []
+                label_used = False
+                for i in range(n):
+                    q, h, p = float(ref_data['flow'][i]), float(ref_data['head'][i]), float(ref_data['power'][i])
+                    if p > power_limit and p > 0:
+                        r = (power_limit / p) ** (1.0 / 3.0)
+                        seg_flow.append(r * q)
+                        seg_head.append(r * r * h)
+                    else:
+                        if seg_flow:
+                            lbl = "Max Motor Power" if not label_used else None
+                            label_used = True
+                            self.ax_head.plot(seg_flow, seg_head, '-', color='orange', linewidth=1.5, alpha=0.7, label=lbl)
+                            seg_flow = []
+                            seg_head = []
+                if seg_flow:
+                    lbl = "Max Motor Power" if not label_used else None
+                    self.ax_head.plot(seg_flow, seg_head, '-', color='orange', linewidth=1.5, alpha=0.7, label=lbl)
+
+                self.ax_power.axhline(y=power_limit, color='orange', linestyle='--', linewidth=1,
+                                      label=f"Max Motor Power ({power_limit} HP)")
+
+            # Reduced speed motor power limit for each visible interpolated curve,
+            # or for max trim if no interpolated curves exist
+            # At speed ratio r, available motor power = P_limit * r (linear derating)
+            # Pump power at ratio r = P_original * r^3
+            # Equilibrium: P_original * r^3 = P_limit * r  =>  r = sqrt(P_limit / P_original)
+            visible_interps = []
+            for idx, interp_data in enumerate(self.interpolated_curves):
+                if idx < len(self.interp_checkboxes) and not self.interp_checkboxes[idx][1].get():
+                    continue
+                if interp_data['power'] is not None:
+                    visible_interps.append(interp_data)
+
+            if visible_interps:
+                rs_ref_curves = [(d, d['target_diameter']) for d in visible_interps]
+            else:
+                # Fall back to max trim smoothed curve
+                max_idx = smoothed_trim_diameters.index(max(smoothed_trim_diameters))
+                rs_ref_curves = [(smoothed_curves_data[max_idx], max(smoothed_trim_diameters))]
+
+            # Determine standard frequency from RPM
+            std_freq = _get_standard_frequency(rpm)
+
+            rs_annotations = []  # collect (tail_q, tail_h, text) for overlap avoidance
+
+            for rs_ref, rs_diam in rs_ref_curves:
+                if rs_ref is None or rs_ref.get('power') is None or len(rs_ref['power']) == 0:
+                    continue
+                rn = min(len(rs_ref['flow']), len(rs_ref['head']), len(rs_ref['power']))
+                rs_seg_flow = []
+                rs_seg_head = []
+                rs_label_used = False
+                tail_q = tail_h = tail_r = None
+                for i in range(rn):
+                    q, h, p = float(rs_ref['flow'][i]), float(rs_ref['head'][i]), float(rs_ref['power'][i])
+                    if p > power_limit and p > 0:
+                        r = (power_limit / p) ** 0.5
+                        rq, rh = r * q, r * r * h
+                        rs_seg_flow.append(rq)
+                        rs_seg_head.append(rh)
+                        tail_q, tail_h, tail_r = rq, rh, r
+                    else:
+                        if rs_seg_flow:
+                            lbl = f"Ø{rs_diam} Reduced Speed Power" if not rs_label_used else None
+                            rs_label_used = True
+                            self.ax_head.plot(rs_seg_flow, rs_seg_head, '-', color='red', linewidth=1.5, alpha=0.7, label=lbl)
+                            rs_seg_flow = []
+                            rs_seg_head = []
+                if rs_seg_flow:
+                    lbl = f"Ø{rs_diam} Reduced Speed Power" if not rs_label_used else None
+                    self.ax_head.plot(rs_seg_flow, rs_seg_head, '-', color='red', linewidth=1.5, alpha=0.7, label=lbl)
+
+                if tail_r is not None:
+                    min_freq = std_freq * tail_r
+                    pct = tail_r * 100
+                    txt = f"{min_freq:.1f} Hz\n{pct:.0f}%"
+                    rs_annotations.append((tail_q, tail_h, txt))
+
+            # Place annotations with vertical staggering to avoid overlap
+            # Sort by head descending so we can offset downward progressively
+            rs_annotations.sort(key=lambda a: a[1], reverse=True)
+            for ann_idx, (aq, ah, atxt) in enumerate(rs_annotations):
+                y_offset = -4 - ann_idx * 28  # stagger each label downward
+                self.ax_head.annotate(
+                    atxt,
+                    xy=(aq, ah),
+                    xytext=(8, y_offset), textcoords='offset points',
+                    fontsize=8, color='red',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', edgecolor='red', alpha=0.8),
+                    arrowprops=dict(arrowstyle='-', color='red', alpha=0.5) if ann_idx > 0 else None,
+                )
+
+        self.ax_head.legend(loc='upper right', facecolor='white', edgecolor='black', labelcolor='black')
+        self.ax_power.legend(loc='upper left', facecolor='white', edgecolor='black', labelcolor='black')
 
         # Fix origin at 0,0, let max float with data
         for ax in [self.ax_head, self.ax_power]:
@@ -524,24 +837,13 @@ class PlottingFrame(ctk.CTkFrame):
             messagebox.showerror("Error", "Invalid RPM")
             return
 
-        # Get all curves for interpolation
-        curves = db.get_curves_for_pump(pump_name, rpm)
-        if len(curves) < 2:
-            messagebox.showerror("Error", "Need at least 2 trim curves for interpolation")
+        # Use smoothed curve data for interpolation
+        if not hasattr(self, '_last_smoothed_curves') or len(self._last_smoothed_curves) < 2:
+            messagebox.showerror("Error", "Need at least 2 trim curves plotted for interpolation. Plot curves first.")
             return
 
-        # Get curve data
-        curves_data = []
-        trim_diameters = []
-        for curve in curves:
-            data = plotting.get_curve_data(curve['id'])
-            if data is not None:
-                curves_data.append(data)
-                trim_diameters.append(curve['trim_diameter'])
-
-        if len(curves_data) < 2:
-            messagebox.showerror("Error", "Need at least 2 curves with data for interpolation")
-            return
+        curves_data = self._last_smoothed_curves
+        trim_diameters = self._last_smoothed_trims
 
         # Perform interpolation
         interp_data = plotting.interpolate_curve(curves_data, trim_diameters, target_diameter)
@@ -549,35 +851,47 @@ class PlottingFrame(ctk.CTkFrame):
             messagebox.showerror("Error", "Interpolation failed")
             return
 
-        # Plot the interpolated curve
-        label = f"Ø{target_diameter} (interp)"
-        self.ax_head.plot(interp_data['flow'], interp_data['head'], '--',
-                         label=label, color='red', linewidth=2.5)
-
-        if interp_data['power'] is not None:
-            self.ax_power.plot(interp_data['flow'], interp_data['power'], '--',
-                              label=label, color='red', linewidth=2.5)
-
-        self.ax_head.legend(loc='upper right', facecolor='#2b2b2b', edgecolor='white', labelcolor='white')
-        self.ax_power.legend(loc='upper left', facecolor='#2b2b2b', edgecolor='white', labelcolor='white')
-
-        # Fix origin at 0,0, let max float with data
-        for ax in [self.ax_head, self.ax_power]:
-            ax.set_xlim(left=0)
-            ax.set_ylim(bottom=0)
-
-        self.fig.tight_layout()
-        self.canvas.draw()
-
         interp_data['target_diameter'] = target_diameter
         self.interpolated_curves.append(interp_data)
+
+        # Add checkbox for this interpolated curve
+        var = ctk.BooleanVar(value=True)
+        cb = ctk.CTkCheckBox(self.interp_scroll, text=f"Ø{target_diameter} (interp)",
+                             variable=var, command=self.plot_curves)
+        cb.pack(anchor="w", padx=5, pady=2)
+        self.interp_checkboxes.append((target_diameter, var))
+
+        self.plot_curves()
         self.status_label.configure(
             text=f"Interpolated Ø{target_diameter} between Ø{interp_data['interpolated_from'][0]} and Ø{interp_data['interpolated_from'][1]}"
         )
 
+    def apply_power_limit(self):
+        """Apply max motor power limit to all interpolated curves."""
+        try:
+            power_limit = float(self.power_limit_entry.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Please enter a valid power limit")
+            return
+
+        self.power_limit_data = {
+            'power_limit': power_limit,
+        }
+        self.plot_curves()
+        self.status_label.configure(text=f"Max motor power applied: {power_limit} HP")
+
+    def clear_power_limit(self):
+        """Clear max motor power limit and replot."""
+        self.power_limit_data = None
+        self.power_limit_entry.delete(0, "end")
+        self.plot_curves()
+
     def clear_interpolated(self):
         """Clear interpolated curves and replot original data."""
         self.interpolated_curves = []
+        for widget in self.interp_scroll.winfo_children():
+            widget.destroy()
+        self.interp_checkboxes.clear()
         self.plot_curves()
 
 
@@ -598,8 +912,8 @@ class PumpCurvePlotterApp(ctk.CTk):
         self.tabview.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
 
         # Add tabs
-        self.tabview.add("Data Entry")
         self.tabview.add("Plotting")
+        self.tabview.add("Data Entry")
 
         # Configure tab frames
         self.tabview.tab("Data Entry").grid_columnconfigure(0, weight=1)
@@ -624,7 +938,7 @@ class PumpCurvePlotterApp(ctk.CTk):
 
 
 def main():
-    ctk.set_appearance_mode("dark")
+    ctk.set_appearance_mode("light")
     ctk.set_default_color_theme("blue")
 
     app = PumpCurvePlotterApp()
